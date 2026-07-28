@@ -8,6 +8,8 @@ struct TerminalJumpService {
     typealias OpenAction = @Sendable ([String]) throws -> Void
     typealias AppleScriptRunner = @Sendable (String) throws -> String
     typealias ProcessRunner = @Sendable (String, [String]) -> Bool
+    typealias TmuxPathResolver = @Sendable () -> String?
+    typealias TmuxCommandRunner = @Sendable (String, [String]) -> String?
     typealias WarpFocusedPaneReader = @Sendable () -> String?
     typealias WarpTabCountReader = @Sendable () -> Int
     /// Returns true when Warp is the system's frontmost app and ready to
@@ -210,6 +212,8 @@ struct TerminalJumpService {
     private let openAction: OpenAction
     private let appleScriptRunner: AppleScriptRunner
     private let processRunner: ProcessRunner
+    private let tmuxPathResolver: TmuxPathResolver
+    private let tmuxCommandRunner: TmuxCommandRunner
     private let warpFocusedPaneReader: WarpFocusedPaneReader
     private let warpTabCountReader: WarpTabCountReader
     private let warpKeystroker: KeystrokeInjector
@@ -225,6 +229,8 @@ struct TerminalJumpService {
         openAction: @escaping OpenAction = Self.defaultOpenAction(arguments:),
         appleScriptRunner: @escaping AppleScriptRunner = Self.defaultAppleScriptRunner(script:),
         processRunner: @escaping ProcessRunner = Self.defaultProcessRunner(executable:arguments:),
+        tmuxPathResolver: @escaping TmuxPathResolver = Self.defaultResolveTmuxPath,
+        tmuxCommandRunner: @escaping TmuxCommandRunner = Self.defaultTmuxCommandRunner(executable:arguments:),
         warpFocusedPaneReader: @escaping WarpFocusedPaneReader = { WarpSQLiteReader().currentFocusedPaneUUID() },
         warpTabCountReader: @escaping WarpTabCountReader = { WarpSQLiteReader().tabCountInActiveWindow() },
         warpKeystroker: KeystrokeInjector = DefaultKeystrokeInjector(),
@@ -241,6 +247,8 @@ struct TerminalJumpService {
         self.openAction = openAction
         self.appleScriptRunner = appleScriptRunner
         self.processRunner = processRunner
+        self.tmuxPathResolver = tmuxPathResolver
+        self.tmuxCommandRunner = tmuxCommandRunner
         self.warpFocusedPaneReader = warpFocusedPaneReader
         self.warpTabCountReader = warpTabCountReader
         self.warpKeystroker = warpKeystroker
@@ -576,7 +584,7 @@ struct TerminalJumpService {
             return false
         }
 
-        guard let tmuxPath = resolveTmuxPath() else {
+        guard let tmuxPath = tmuxPathResolver() else {
             return false
         }
 
@@ -632,9 +640,14 @@ struct TerminalJumpService {
     /// Run a tmux command and return its stdout (nil on failure).
     /// Uses the same direct-exec pattern as ActiveAgentProcessDiscovery.commandOutput.
     private func runTmuxCommand(tmuxPath: String, socketArgs: [String], args: [String]) -> String? {
+        tmuxCommandRunner(tmuxPath, socketArgs + args)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func defaultTmuxCommandRunner(executable: String, arguments: [String]) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmuxPath)
-        process.arguments = socketArgs + args
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
 
         let outPipe = Pipe()
         process.standardOutput = outPipe
@@ -646,14 +659,13 @@ struct TerminalJumpService {
 
             guard process.terminationStatus == 0 else { return nil }
 
-            return String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         } catch {
             return nil
         }
     }
 
-    private func resolveTmuxPath() -> String? {
+    private static func defaultResolveTmuxPath() -> String? {
         let candidates = [
             "/opt/homebrew/bin/tmux",
             "/usr/local/bin/tmux",
