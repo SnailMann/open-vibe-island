@@ -28,6 +28,11 @@
 "settings.general.suppressFrontmostNotifications" = "前台工作階段不彈出通知";
 "settings.general.showCodexUsage" = "顯示 Codex 用量";
 "settings.general.completionReply" = "在完成卡片中回覆";
+"settings.general.autoExpandEvents" = "自動展開";
+"settings.general.autoExpandPermissionRequests" = "權限審批";
+"settings.general.autoExpandQuestions" = "需要回答問題";
+"settings.general.autoExpandCompletions" = "任務完成";
+"settings.general.autoExpandEventsFooter" = "選擇哪些事件會自動展開 Island。關閉後，工作階段狀態仍會正常更新。";
 "settings.general.cliHooks" = "CLI Hooks";
 "settings.general.activated" = "已啟用";
 "settings.general.install" = "安裝";

@@ -26,6 +26,9 @@ struct AppModelSessionListTests {
             "appearance.island.v8.topBar.completedStaleThreshold",
             "app.suppressFrontmostNotifications",
             "feature.completionReply.enabled",
+            "overlay.autoExpand.permissionRequests",
+            "overlay.autoExpand.questions",
+            "overlay.autoExpand.completions",
             "overlay.sound.muted",
         ].forEach(UserDefaults.standard.removeObject(forKey:))
     }
@@ -665,6 +668,117 @@ struct AppModelSessionListTests {
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)
         #expect(model.islandSurface == .sessionList(actionableSessionID: "background-session"))
+    }
+
+    @Test
+    func automaticExpansionDefaultsToEveryEventType() {
+        let model = AppModel()
+
+        #expect(model.autoExpandPermissionRequests)
+        #expect(model.autoExpandQuestions)
+        #expect(model.autoExpandCompletions)
+    }
+
+    @Test
+    func automaticExpansionPreferencesPersistIndependently() {
+        let model = AppModel()
+        model.autoExpandCompletions = false
+
+        let restoredModel = AppModel()
+
+        #expect(restoredModel.autoExpandPermissionRequests)
+        #expect(restoredModel.autoExpandQuestions)
+        #expect(!restoredModel.autoExpandCompletions)
+    }
+
+    @Test
+    func disabledAutomaticExpansionStillUpdatesEverySessionState() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let model = AppModel()
+        model.autoExpandPermissionRequests = false
+        model.autoExpandQuestions = false
+        model.autoExpandCompletions = false
+        model.notchStatus = .closed
+        model.notchOpenReason = nil
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "permission-session",
+                    title: "Codex · permission",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+                AgentSession(
+                    id: "question-session",
+                    title: "Codex · question",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+                AgentSession(
+                    id: "completion-session",
+                    title: "Codex · completion",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "permission-session",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "main.swift",
+                        affectedPath: "/tmp/main.swift"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+        model.applyTrackedEvent(
+            .questionAsked(
+                QuestionAsked(
+                    sessionID: "question-session",
+                    prompt: QuestionPrompt(
+                        title: "Which environment?",
+                        options: ["Production", "Staging"]
+                    ),
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+        model.applyTrackedEvent(
+            .sessionCompleted(
+                SessionCompleted(
+                    sessionID: "completion-session",
+                    summary: "Finished",
+                    timestamp: now.addingTimeInterval(3)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+
+        #expect(model.notchStatus == .closed)
+        #expect(model.notchOpenReason == nil)
+        #expect(model.islandSurface == .sessionList())
+        #expect(model.state.session(id: "permission-session")?.phase == .waitingForApproval)
+        #expect(model.state.session(id: "question-session")?.phase == .waitingForAnswer)
+        #expect(model.state.session(id: "completion-session")?.phase == .completed)
     }
 
     @Test
