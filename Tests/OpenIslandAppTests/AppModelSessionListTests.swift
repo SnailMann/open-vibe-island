@@ -3,6 +3,29 @@ import Testing
 @testable import OpenIslandApp
 import OpenIslandCore
 
+private actor NotificationProbeGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var hasStarted = false
+
+    func suspendUntilReleased() async {
+        hasStarted = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        while !hasStarted {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @MainActor
 @Suite(.serialized)
 struct AppModelSessionListTests {
@@ -26,9 +49,6 @@ struct AppModelSessionListTests {
             "appearance.island.v8.topBar.completedStaleThreshold",
             "app.suppressFrontmostNotifications",
             "feature.completionReply.enabled",
-            "overlay.autoExpand.permissionRequests",
-            "overlay.autoExpand.questions",
-            "overlay.autoExpand.completions",
             "overlay.sound.muted",
         ].forEach(UserDefaults.standard.removeObject(forKey:))
     }
@@ -672,7 +692,11 @@ struct AppModelSessionListTests {
 
     @Test
     func automaticExpansionDefaultsToEveryEventType() {
-        let model = AppModel()
+        let isolatedDefaults = makeIsolatedAutomaticExpansionDefaults()
+        defer {
+            isolatedDefaults.defaults.removePersistentDomain(forName: isolatedDefaults.suiteName)
+        }
+        let model = AppModel(automaticExpansionDefaults: isolatedDefaults.defaults)
 
         #expect(model.autoExpandPermissionRequests)
         #expect(model.autoExpandQuestions)
@@ -681,20 +705,190 @@ struct AppModelSessionListTests {
 
     @Test
     func automaticExpansionPreferencesPersistIndependently() {
-        let model = AppModel()
+        let isolatedDefaults = makeIsolatedAutomaticExpansionDefaults()
+        defer {
+            isolatedDefaults.defaults.removePersistentDomain(forName: isolatedDefaults.suiteName)
+        }
+        let model = AppModel(automaticExpansionDefaults: isolatedDefaults.defaults)
+        model.autoExpandPermissionRequests = false
+        model.autoExpandQuestions = false
         model.autoExpandCompletions = false
+        model.autoExpandQuestions = true
 
-        let restoredModel = AppModel()
+        let restoredModel = AppModel(automaticExpansionDefaults: isolatedDefaults.defaults)
 
-        #expect(restoredModel.autoExpandPermissionRequests)
+        #expect(!restoredModel.autoExpandPermissionRequests)
         #expect(restoredModel.autoExpandQuestions)
         #expect(!restoredModel.autoExpandCompletions)
     }
 
     @Test
+    func automaticExpansionPreferencesGateTheirOwnEventTypes() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let isolatedDefaults = makeIsolatedAutomaticExpansionDefaults()
+        defer {
+            isolatedDefaults.defaults.removePersistentDomain(forName: isolatedDefaults.suiteName)
+        }
+        let model = AppModel(automaticExpansionDefaults: isolatedDefaults.defaults)
+        model.suppressFrontmostNotifications = false
+        model.notchStatus = .closed
+        model.notchOpenReason = nil
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "permission-session",
+                    title: "Codex · permission",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+                AgentSession(
+                    id: "question-session",
+                    title: "Codex · question",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+                AgentSession(
+                    id: "completion-session",
+                    title: "Codex · completion",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.autoExpandPermissionRequests = false
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "permission-session",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "main.swift",
+                        affectedPath: "/tmp/main.swift"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+        #expect(model.notchStatus == .closed)
+
+        model.autoExpandPermissionRequests = true
+        model.autoExpandQuestions = false
+        model.applyTrackedEvent(
+            .questionAsked(
+                QuestionAsked(
+                    sessionID: "question-session",
+                    prompt: QuestionPrompt(
+                        title: "Which environment?",
+                        options: ["Production", "Staging"]
+                    ),
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+        #expect(model.notchStatus == .closed)
+
+        model.autoExpandQuestions = true
+        model.autoExpandCompletions = false
+        model.applyTrackedEvent(
+            .sessionCompleted(
+                SessionCompleted(
+                    sessionID: "completion-session",
+                    summary: "Finished",
+                    timestamp: now.addingTimeInterval(3)
+                )
+            ),
+            updateLastActionMessage: false
+        )
+        #expect(model.notchStatus == .closed)
+        #expect(model.notchOpenReason == nil)
+    }
+
+    @Test
+    func disablingAutomaticExpansionDuringFrontmostProbePreventsPresentation() async throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let isolatedDefaults = makeIsolatedAutomaticExpansionDefaults()
+        defer {
+            isolatedDefaults.defaults.removePersistentDomain(forName: isolatedDefaults.suiteName)
+        }
+        let probeGate = NotificationProbeGate()
+        let model = AppModel(
+            isNotificationSessionAlreadyFrontmost: { _ in
+                await probeGate.suspendUntilReleased()
+                return false
+            },
+            automaticExpansionDefaults: isolatedDefaults.defaults
+        )
+        model.suppressFrontmostNotifications = true
+        model.notchStatus = .closed
+        model.notchOpenReason = nil
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "pending-probe-session",
+                    title: "Codex · pending probe",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "pending-probe-session",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "main.swift",
+                        affectedPath: "/tmp/main.swift"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        await probeGate.waitUntilStarted()
+        model.autoExpandPermissionRequests = false
+        await probeGate.release()
+        for _ in 0..<20 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(model.notchStatus == .closed)
+        #expect(model.notchOpenReason == nil)
+        #expect(model.islandSurface == .sessionList())
+        #expect(model.state.session(id: "pending-probe-session")?.phase == .waitingForApproval)
+    }
+
+    @Test
     func disabledAutomaticExpansionStillUpdatesEverySessionState() {
         let now = Date(timeIntervalSince1970: 2_000)
-        let model = AppModel()
+        let isolatedDefaults = makeIsolatedAutomaticExpansionDefaults()
+        defer {
+            isolatedDefaults.defaults.removePersistentDomain(forName: isolatedDefaults.suiteName)
+        }
+        let model = AppModel(automaticExpansionDefaults: isolatedDefaults.defaults)
         model.autoExpandPermissionRequests = false
         model.autoExpandQuestions = false
         model.autoExpandCompletions = false
@@ -1497,6 +1691,13 @@ struct AppModelSessionListTests {
                 terminalSessionID: "ghostty-\(id)"
             )
         )
+    }
+
+    private func makeIsolatedAutomaticExpansionDefaults() -> (defaults: UserDefaults, suiteName: String) {
+        let suiteName = "OpenIslandAppTests.automatic-expansion.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return (defaults, suiteName)
     }
 
     private func placementDiagnostics(mode: OverlayPlacementMode) -> OverlayPlacementDiagnostics {
