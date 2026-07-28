@@ -291,4 +291,72 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(openCodeSnapshots.first?.workingDirectory == "/tmp/open-island")
         #expect(openCodeSnapshots.first?.terminalTTY == nil)
     }
+
+    @Test
+    func tmuxAgentsUseTheActiveWarpClientInsteadOfTheServersStaleTerminalEnvironment() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" {
+                return """
+                  202 300 ttys005 codex
+                  203 300 ttys006 gemini
+                  204 300 ttys007 kimi
+                  300 1 ?? tmux new-session -s dev
+                  900 1 ?? /Applications/Warp.app/Contents/MacOS/stable terminal-server
+                  901 900 ttys001 -zsh
+                  902 901 ttys001 tmux attach -t dev
+                """
+            }
+
+            if executablePath == "/usr/sbin/lsof",
+               let pid = arguments.dropFirst(2).first {
+                switch pid {
+                case "202":
+                    return """
+                    fcwd
+                    n/tmp/codex-project
+                    n/Users/test/.codex/sessions/2026/07/28/rollout-2026-07-28T12-00-00-019d516f-71ee-7e40-bcff-502fedac0928.jsonl
+                    """
+                case "203":
+                    return """
+                    fcwd
+                    n/tmp/gemini-project
+                    """
+                case "204":
+                    return """
+                    fcwd
+                    n/tmp/kimi-project
+                    """
+                default:
+                    return nil
+                }
+            }
+
+            if executablePath == "/usr/bin/which", arguments == ["tmux"] {
+                return "/usr/local/bin/tmux"
+            }
+
+            if executablePath.hasSuffix("/tmux") {
+                if arguments.contains("list-panes") {
+                    return """
+                    /dev/ttys005\tdev:1.1
+                    /dev/ttys006\tdev:1.2
+                    /dev/ttys007\tdev:1.3
+                    """
+                }
+                if arguments.contains("list-clients") {
+                    return "1785231911\t/dev/ttys001\tdev"
+                }
+            }
+
+            return nil
+        }
+
+        let snapshots = discovery.discover()
+
+        #expect(snapshots.count == 3)
+        #expect(snapshots.allSatisfy { $0.terminalApp == "Warp" })
+        #expect(snapshots.first(where: { $0.tool == .codex })?.tmuxTarget == "dev:1.1")
+        #expect(snapshots.first(where: { $0.tool == .geminiCLI })?.tmuxTarget == "dev:1.2")
+        #expect(snapshots.first(where: { $0.tool == .kimiCLI })?.tmuxTarget == "dev:1.3")
+    }
 }

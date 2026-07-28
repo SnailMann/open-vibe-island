@@ -72,7 +72,11 @@ struct TerminalJumpTargetResolver {
                 let matched = matchTmuxSnapshots(snapshots, to: tmuxSessions)
                 for (sessionID, snapshot) in matched {
                     if let session = sessions.first(where: { $0.id == sessionID }),
-                       let corrected = correctedTmuxJumpTarget(for: session, snapshot: snapshot) {
+                       let corrected = correctedTmuxJumpTarget(
+                           for: session,
+                           snapshot: snapshot,
+                           activeProcesses: activeProcesses
+                       ) {
                         jumpTargetUpdates[sessionID] = corrected
                     }
                 }
@@ -268,9 +272,10 @@ struct TerminalJumpTargetResolver {
         return assignments
     }
 
-    private func correctedTmuxJumpTarget(
+    func correctedTmuxJumpTarget(
         for session: AgentSession,
-        snapshot: TmuxPaneSnapshot
+        snapshot: TmuxPaneSnapshot,
+        activeProcesses: [ActiveProcessSnapshot]
     ) -> JumpTarget? {
         guard var jumpTarget = session.jumpTarget else {
             return nil
@@ -291,6 +296,24 @@ struct TerminalJumpTargetResolver {
         if let title = nonEmptyValue(snapshot.title),
            title != jumpTarget.paneTitle {
             jumpTarget.paneTitle = title
+            changed = true
+        }
+
+        let matchingProcess = activeProcesses.first {
+            nonEmptyValue($0.tmuxTarget) == snapshot.paneID
+        } ?? activeProcesses.first {
+            normalizedTTYForMatching($0.terminalTTY) == normalizedTTYForMatching(snapshot.tty)
+        }
+
+        if let terminalApp = nonEmptyValue(matchingProcess?.terminalApp),
+           normalizedTerminalName(for: jumpTarget.terminalApp) != terminalApp.lowercased() {
+            jumpTarget.terminalApp = terminalApp
+            changed = true
+        }
+
+        if let socketPath = nonEmptyValue(matchingProcess?.tmuxSocketPath),
+           nonEmptyValue(jumpTarget.tmuxSocketPath) != socketPath {
+            jumpTarget.tmuxSocketPath = socketPath
             changed = true
         }
 
@@ -795,6 +818,13 @@ struct TerminalJumpTargetResolver {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else { return nil }
         return URL(fileURLWithPath: value).standardizedFileURL.path.lowercased()
+    }
+
+    private func normalizedTTYForMatching(_ value: String?) -> String? {
+        guard let value = nonEmptyValue(value) else {
+            return nil
+        }
+        return value.hasPrefix("/dev/") ? value : "/dev/\(value)"
     }
 
     private func nonEmptyValue(_ value: String?) -> String? {

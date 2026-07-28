@@ -43,7 +43,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 | **WezTerm** | Full Support | Jump-back via CLI pane targeting |
 | **iTerm2** | Full Support | Jump-back with session ID / TTY matching |
 | **tmux** (multiplexer) | Full Support | Jump-back with session/window/pane targeting |
-| **Warp** | Planned | Fallback detection only |
+| **Warp** | Full Support | Jump-back via Warp pane mapping or the active tmux client |
 
 ## Features
 
@@ -66,6 +66,5 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 
 ## Future Directions
 
-- Warp precision jump support
 - Sound packs, themes, and onboarding polish
 - Deeper terminal split targeting

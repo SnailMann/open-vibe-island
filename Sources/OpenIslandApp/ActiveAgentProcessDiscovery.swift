@@ -158,25 +158,17 @@ struct ActiveAgentProcessDiscovery {
                     continue
                 }
 
-                var snapshot = ProcessSnapshot(
-                    tool: .openCode,
-                    sessionID: nil,
-                    workingDirectory: cwd,
-                    terminalTTY: process.terminalTTY,
-                    terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                let snapshot = processSnapshotEnrichedWithTmuxInfo(
+                    ProcessSnapshot(
+                        tool: .openCode,
+                        sessionID: nil,
+                        workingDirectory: cwd,
+                        terminalTTY: process.terminalTTY,
+                        terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                    ),
+                    process: process,
+                    processesByPID: processesByPID
                 )
-
-                if snapshot.terminalApp == nil, let agentTTY = process.terminalTTY {
-                    if let (tmuxTarget, hostTerminalApp, socketPath) = resolveTmuxInfo(
-                        agentTTY: agentTTY,
-                        processes: processesByPID.values.map { $0 },
-                        processesByPID: processesByPID
-                    ) {
-                        snapshot.terminalApp = hostTerminalApp
-                        snapshot.tmuxTarget = tmuxTarget
-                        snapshot.tmuxSocketPath = socketPath
-                    }
-                }
 
                 snapshots.append(snapshot)
                 continue
@@ -189,12 +181,16 @@ struct ActiveAgentProcessDiscovery {
                 }
 
                 let lsofOutput = lsofOutput(pid: process.pid)
-                snapshots.append(ProcessSnapshot(
-                    tool: .geminiCLI,
-                    sessionID: nil,
-                    workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
-                    terminalTTY: process.terminalTTY,
-                    terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                snapshots.append(processSnapshotEnrichedWithTmuxInfo(
+                    ProcessSnapshot(
+                        tool: .geminiCLI,
+                        sessionID: nil,
+                        workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
+                        terminalTTY: process.terminalTTY,
+                        terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                    ),
+                    process: process,
+                    processesByPID: processesByPID
                 ))
                 continue
             }
@@ -206,12 +202,16 @@ struct ActiveAgentProcessDiscovery {
                 }
 
                 let lsofOutput = lsofOutput(pid: process.pid)
-                snapshots.append(ProcessSnapshot(
-                    tool: .kimiCLI,
-                    sessionID: nil,
-                    workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
-                    terminalTTY: process.terminalTTY,
-                    terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                snapshots.append(processSnapshotEnrichedWithTmuxInfo(
+                    ProcessSnapshot(
+                        tool: .kimiCLI,
+                        sessionID: nil,
+                        workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
+                        terminalTTY: process.terminalTTY,
+                        terminalApp: terminalApp(for: process, processesByPID: processesByPID)
+                    ),
+                    process: process,
+                    processesByPID: processesByPID
                 ))
                 continue
             }
@@ -260,7 +260,7 @@ struct ActiveAgentProcessDiscovery {
             return nil
         }
 
-        var snapshot = ProcessSnapshot(
+        let snapshot = ProcessSnapshot(
             tool: .codex,
             sessionID: sessionID,
             workingDirectory: workingDirectory(from: lsofOutput),
@@ -268,20 +268,11 @@ struct ActiveAgentProcessDiscovery {
             terminalApp: terminalApp(for: process, processesByPID: processesByPID)
         )
 
-        // If terminalApp is nil and we have a TTY, try to resolve tmux info
-        if snapshot.terminalApp == nil, let agentTTY = process.terminalTTY {
-            if let (tmuxTarget, hostTerminalApp, socketPath) = resolveTmuxInfo(
-                agentTTY: agentTTY,
-                processes: processesByPID.values.map { $0 },
-                processesByPID: processesByPID
-            ) {
-                snapshot.terminalApp = hostTerminalApp
-                snapshot.tmuxTarget = tmuxTarget
-                snapshot.tmuxSocketPath = socketPath
-            }
-        }
-
-        return snapshot
+        return processSnapshotEnrichedWithTmuxInfo(
+            snapshot,
+            process: process,
+            processesByPID: processesByPID
+        )
     }
 
     private func cursorSnapshot(
@@ -296,7 +287,7 @@ struct ActiveAgentProcessDiscovery {
             return nil
         }
 
-        var snapshot = ProcessSnapshot(
+        let snapshot = ProcessSnapshot(
             tool: .cursor,
             sessionID: sessionID,
             workingDirectory: workingDirectory,
@@ -304,19 +295,11 @@ struct ActiveAgentProcessDiscovery {
             terminalApp: terminalApp(for: process, processesByPID: processesByPID)
         )
 
-        if snapshot.terminalApp == nil, let agentTTY = process.terminalTTY {
-            if let (tmuxTarget, hostTerminalApp, socketPath) = resolveTmuxInfo(
-                agentTTY: agentTTY,
-                processes: processesByPID.values.map { $0 },
-                processesByPID: processesByPID
-            ) {
-                snapshot.terminalApp = hostTerminalApp
-                snapshot.tmuxTarget = tmuxTarget
-                snapshot.tmuxSocketPath = socketPath
-            }
-        }
-
-        return snapshot
+        return processSnapshotEnrichedWithTmuxInfo(
+            snapshot,
+            process: process,
+            processesByPID: processesByPID
+        )
     }
 
     private func bestCodexTranscriptPath(in lsofOutput: String) -> String? {
@@ -361,7 +344,7 @@ struct ActiveAgentProcessDiscovery {
             return nil
         }
 
-        var snapshot = ProcessSnapshot(
+        let snapshot = ProcessSnapshot(
             tool: .claudeCode,
             sessionID: sessionID,
             workingDirectory: workingDirectory,
@@ -370,20 +353,11 @@ struct ActiveAgentProcessDiscovery {
             transcriptPath: transcriptPath
         )
 
-        // If terminalApp is nil and we have a TTY, try to resolve tmux info
-        if snapshot.terminalApp == nil, let agentTTY = process.terminalTTY {
-            if let (tmuxTarget, hostTerminalApp, socketPath) = resolveTmuxInfo(
-                agentTTY: agentTTY,
-                processes: processesByPID.values.map { $0 },
-                processesByPID: processesByPID
-            ) {
-                snapshot.terminalApp = hostTerminalApp
-                snapshot.tmuxTarget = tmuxTarget
-                snapshot.tmuxSocketPath = socketPath
-            }
-        }
-
-        return snapshot
+        return processSnapshotEnrichedWithTmuxInfo(
+            snapshot,
+            process: process,
+            processesByPID: processesByPID
+        )
     }
 
     private func bestClaudeTranscriptPath(in lsofOutput: String, workingDirectory: String?) -> String? {
@@ -837,6 +811,28 @@ struct ActiveAgentProcessDiscovery {
         return output
     }
 
+    private func processSnapshotEnrichedWithTmuxInfo(
+        _ snapshot: ProcessSnapshot,
+        process: RunningProcess,
+        processesByPID: [String: RunningProcess]
+    ) -> ProcessSnapshot {
+        guard snapshot.terminalApp == nil,
+              let agentTTY = process.terminalTTY,
+              let (tmuxTarget, hostTerminalApp, socketPath) = resolveTmuxInfo(
+                  agentTTY: agentTTY,
+                  processes: processesByPID.values.map { $0 },
+                  processesByPID: processesByPID
+              ) else {
+            return snapshot
+        }
+
+        var enriched = snapshot
+        enriched.terminalApp = hostTerminalApp
+        enriched.tmuxTarget = tmuxTarget
+        enriched.tmuxSocketPath = socketPath
+        return enriched
+    }
+
     // MARK: - Tmux support
 
     private func resolveTmuxPath() -> String? {
@@ -890,7 +886,13 @@ struct ActiveAgentProcessDiscovery {
         }
 
         // Find the terminal app hosting the tmux client connected to this pane
-        guard let hostTerminalApp = findTmuxClientTerminal(tmuxPath: tmuxPath, socketPath: socketPath, processesByPID: processesByPID) else {
+        let sessionName = tmuxTarget.split(separator: ":", maxSplits: 1).first.map(String.init)
+        guard let hostTerminalApp = findTmuxClientTerminal(
+            tmuxPath: tmuxPath,
+            socketPath: socketPath,
+            sessionName: sessionName,
+            processesByPID: processesByPID
+        ) else {
             return nil
         }
 
@@ -928,9 +930,14 @@ struct ActiveAgentProcessDiscovery {
     private func findTmuxClientTerminal(
         tmuxPath: String,
         socketPath: String?,
+        sessionName: String?,
         processesByPID: [String: RunningProcess]
     ) -> String? {
-        var args: [String] = ["list-clients", "-F", "#{client_tty}"]
+        var args: [String] = [
+            "list-clients",
+            "-F",
+            "#{client_activity}\t#{client_tty}\t#{client_session}",
+        ]
 
         if let socketPath = socketPath {
             args = ["-S", socketPath] + args
@@ -940,15 +947,25 @@ struct ActiveAgentProcessDiscovery {
             return nil
         }
 
-        for clientTTYLine in output.split(separator: "\n") {
-            let clientTTY = clientTTYLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !clientTTY.isEmpty else {
-                continue
+        let clients = output.split(separator: "\n").compactMap { line -> (activity: Int, tty: String)? in
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3,
+                  sessionName == nil || parts[2] == sessionName else {
+                return nil
             }
 
+            return (
+                activity: Int(parts[0]) ?? 0,
+                tty: parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        .filter { !$0.tty.isEmpty }
+        .sorted { $0.activity > $1.activity }
+
+        for client in clients {
             // Find the process whose TTY matches this client TTY, then walk its parents
             for process in processesByPID.values {
-                if process.terminalTTY == clientTTY {
+                if process.terminalTTY == client.tty {
                     if let terminalApp = terminalApp(for: process, processesByPID: processesByPID) {
                         return terminalApp
                     }
