@@ -28,6 +28,11 @@
 "settings.general.suppressFrontmostNotifications" = "前台会话不弹出通知";
 "settings.general.showCodexUsage" = "显示 Codex 用量";
 "settings.general.completionReply" = "在完成卡片中回复";
+"settings.general.autoExpandEvents" = "自动展开";
+"settings.general.autoExpandPermissionRequests" = "权限审批";
+"settings.general.autoExpandQuestions" = "需要回答问题";
+"settings.general.autoExpandCompletions" = "任务完成";
+"settings.general.autoExpandEventsFooter" = "选择哪些事件会自动展开 Island。关闭后，会话状态仍会正常更新。";
 "settings.general.cliHooks" = "CLI Hooks";
 "settings.general.activated" = "已激活";
 "settings.general.install" = "安装";

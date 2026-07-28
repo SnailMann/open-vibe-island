@@ -11,9 +11,14 @@ The island now separates layout from content surface:
 Routing rules:
 
 - manual click or hover opens `sessionList`
-- `permissionRequested` opens `approvalCard`
-- `questionAsked` opens `questionCard`
-- `sessionCompleted` opens `completionCard`
+- `permissionRequested` opens `approvalCard` when permission auto-expansion is enabled
+- `questionAsked` opens `questionCard` when question auto-expansion is enabled
+- `sessionCompleted` opens `completionCard` when completion auto-expansion is enabled
+
+The three automatic-expansion preferences are independent and default to
+enabled for backward compatibility. Disabling one only prevents the Island
+from expanding for that event; the session state and collapsed Island remain
+up to date.
 
 Auto-expanded cards are temporary surfaces:
 

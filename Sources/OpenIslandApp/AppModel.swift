@@ -23,6 +23,9 @@ final class AppModel {
     private static let showCodexUsageDefaultsKey = "app.showCodexUsage"
     private static let completionReplyEnabledDefaultsKey = "feature.completionReply.enabled"
     private static let suppressFrontmostNotificationsDefaultsKey = "app.suppressFrontmostNotifications"
+    private static let autoExpandPermissionRequestsDefaultsKey = "overlay.autoExpand.permissionRequests"
+    private static let autoExpandQuestionsDefaultsKey = "overlay.autoExpand.questions"
+    private static let autoExpandCompletionsDefaultsKey = "overlay.autoExpand.completions"
     private static let legacyIslandSessionStateIndicatorDefaultsKey = "appearance.island.v8.stateIndicator"
     private static let legacyIslandSessionGroupDefaultsKey = "appearance.island.v8.sessionGroup"
     private static let legacyIslandSessionSortDefaultsKey = "appearance.island.v8.sessionSort"
@@ -263,6 +266,24 @@ final class AppModel {
         didSet {
             guard hasFinishedInit, suppressFrontmostNotifications != oldValue else { return }
             UserDefaults.standard.set(suppressFrontmostNotifications, forKey: Self.suppressFrontmostNotificationsDefaultsKey)
+        }
+    }
+    var autoExpandPermissionRequests: Bool = true {
+        didSet {
+            guard hasFinishedInit, autoExpandPermissionRequests != oldValue else { return }
+            UserDefaults.standard.set(autoExpandPermissionRequests, forKey: Self.autoExpandPermissionRequestsDefaultsKey)
+        }
+    }
+    var autoExpandQuestions: Bool = true {
+        didSet {
+            guard hasFinishedInit, autoExpandQuestions != oldValue else { return }
+            UserDefaults.standard.set(autoExpandQuestions, forKey: Self.autoExpandQuestionsDefaultsKey)
+        }
+    }
+    var autoExpandCompletions: Bool = true {
+        didSet {
+            guard hasFinishedInit, autoExpandCompletions != oldValue else { return }
+            UserDefaults.standard.set(autoExpandCompletions, forKey: Self.autoExpandCompletionsDefaultsKey)
         }
     }
     var launchAtLoginEnabled: Bool = false {
@@ -595,12 +616,18 @@ final class AppModel {
             Self.hapticFeedbackEnabledDefaultsKey: false,
             Self.completionReplyEnabledDefaultsKey: false,
             Self.suppressFrontmostNotificationsDefaultsKey: true,
+            Self.autoExpandPermissionRequestsDefaultsKey: true,
+            Self.autoExpandQuestionsDefaultsKey: true,
+            Self.autoExpandCompletionsDefaultsKey: true,
         ])
         isSoundMuted = UserDefaults.standard.bool(forKey: Self.soundMutedDefaultsKey)
         selectedSoundName = NotificationSoundService.selectedSoundName
         showDockIcon = UserDefaults.standard.bool(forKey: Self.showDockIconDefaultsKey)
         hapticFeedbackEnabled = UserDefaults.standard.bool(forKey: Self.hapticFeedbackEnabledDefaultsKey)
         suppressFrontmostNotifications = UserDefaults.standard.bool(forKey: Self.suppressFrontmostNotificationsDefaultsKey)
+        autoExpandPermissionRequests = UserDefaults.standard.bool(forKey: Self.autoExpandPermissionRequestsDefaultsKey)
+        autoExpandQuestions = UserDefaults.standard.bool(forKey: Self.autoExpandQuestionsDefaultsKey)
+        autoExpandCompletions = UserDefaults.standard.bool(forKey: Self.autoExpandCompletionsDefaultsKey)
         if UserDefaults.standard.object(forKey: Self.showCodexUsageDefaultsKey) != nil {
             showCodexUsage = UserDefaults.standard.bool(forKey: Self.showCodexUsageDefaultsKey)
         } else {
@@ -1538,12 +1565,26 @@ final class AppModel {
             lastActionMessage = describe(event)
         }
 
-        if let surface = IslandSurface.notificationSurface(for: event) {
+        if shouldAutoExpand(for: event),
+           let surface = IslandSurface.notificationSurface(for: event) {
             scheduleNotificationSurfacePresentationIfNeeded(
                 surface,
                 wasAlreadyCompleted: wasAlreadyCompleted,
                 ingress: ingress
             )
+        }
+    }
+
+    private func shouldAutoExpand(for event: AgentEvent) -> Bool {
+        switch event {
+        case .permissionRequested:
+            autoExpandPermissionRequests
+        case .questionAsked:
+            autoExpandQuestions
+        case .sessionCompleted:
+            autoExpandCompletions
+        default:
+            false
         }
     }
 

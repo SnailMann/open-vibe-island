@@ -28,6 +28,11 @@
 "settings.general.suppressFrontmostNotifications" = "Suppress notifications for focused sessions";
 "settings.general.showCodexUsage" = "Show Codex usage";
 "settings.general.completionReply" = "Reply from completion card";
+"settings.general.autoExpandEvents" = "Automatic Expansion";
+"settings.general.autoExpandPermissionRequests" = "Permission requests";
+"settings.general.autoExpandQuestions" = "Questions";
+"settings.general.autoExpandCompletions" = "Task completion";
+"settings.general.autoExpandEventsFooter" = "Choose which events automatically expand the Island. Disabled events still update their sessions.";
 "settings.general.cliHooks" = "CLI Hooks";
 "settings.general.activated" = "Activated";
 "settings.general.install" = "Install";

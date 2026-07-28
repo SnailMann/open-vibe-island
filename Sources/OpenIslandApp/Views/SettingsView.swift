@@ -225,6 +225,27 @@ struct GeneralSettingsPane: View {
                 ))
             }
 
+            Section {
+                Toggle(lang.t("settings.general.autoExpandPermissionRequests"), isOn: Binding(
+                    get: { model.autoExpandPermissionRequests },
+                    set: { model.autoExpandPermissionRequests = $0 }
+                ))
+                Toggle(lang.t("settings.general.autoExpandQuestions"), isOn: Binding(
+                    get: { model.autoExpandQuestions },
+                    set: { model.autoExpandQuestions = $0 }
+                ))
+                Toggle(lang.t("settings.general.autoExpandCompletions"), isOn: Binding(
+                    get: { model.autoExpandCompletions },
+                    set: { model.autoExpandCompletions = $0 }
+                ))
+            } header: {
+                Text(lang.t("settings.general.autoExpandEvents"))
+            } footer: {
+                Text(lang.t("settings.general.autoExpandEventsFooter"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
         }
         .formStyle(.grouped)
         .navigationTitle(lang.t("settings.tab.general"))
