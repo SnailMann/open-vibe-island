@@ -5,7 +5,7 @@ import OpenIslandCore
 struct OpenIslandHooksCLI {
     private static let interactiveClaudeHookTimeout: TimeInterval = 24 * 60 * 60
     private static let interactiveCodexHookTimeout =
-        TimeInterval(CodexHookInstaller.managedInteractiveTimeout)
+        TimeInterval(CodexHookInstaller.codexPermissionRequestTimeout)
 
     private enum HookSource: String {
         case codex

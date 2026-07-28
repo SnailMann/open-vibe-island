@@ -73,19 +73,26 @@ public enum CodexHookInstaller {
     public static let managedStatusMessage = "Managed by Open Island"
     public static let legacyManagedStatusMessage = "Managed by Vibe Island"
     public static let managedTimeout = 45
-    public static let managedInteractiveTimeout = 60 * 60
+    public static let codexPermissionRequestTimeout = 60 * 60
     private static let currentFeatureKey = CodexHooksFeatureFlagKey.current.rawValue
     private static let legacyFeatureKey = CodexHooksFeatureFlagKey.legacy.rawValue
 
     // Keep the managed Codex install aligned with the original app's low-noise footprint.
     // The bridge still understands richer hook events, but we do not install them by default
-    // because per-command Bash hooks produce a large amount of terminal log spam.
-    private static let eventSpecs: [(name: String, matcher: String?, timeout: Int)] = [
+    // because per-command Bash hooks produce a large amount of terminal log spam. PermissionRequest
+    // is also intentionally omitted so Codex's normal approval flow, including Auto-review, remains
+    // authoritative.
+    private static let installedEventSpecs: [(name: String, matcher: String?, timeout: Int)] = [
         ("SessionStart", "startup|resume", managedTimeout),
         ("UserPromptSubmit", nil, managedTimeout),
-        ("PermissionRequest", nil, managedInteractiveTimeout),
         ("Stop", nil, managedTimeout),
     ]
+    // Older Open Island releases installed PermissionRequest. Keep recognizing it so install,
+    // uninstall, and status migrate those managed entries without touching third-party hooks.
+    private static let legacyManagedEventNames = ["PermissionRequest"]
+    private static var managedEventNames: [String] {
+        installedEventSpecs.map(\.name) + legacyManagedEventNames
+    }
 
     public static func hookCommand(for binaryPath: String) -> String {
         shellQuote(binaryPath)
@@ -108,7 +115,7 @@ public enum CodexHookInstaller {
             }
         }
 
-        for spec in eventSpecs {
+        for spec in installedEventSpecs {
             let existingGroups = hooksObject[spec.name] as? [Any] ?? []
             let cleanedGroups = sanitizeForInstall(groups: existingGroups, replacingCommand: hookCommand)
             hooksObject[spec.name] = cleanedGroups + [
@@ -134,8 +141,8 @@ public enum CodexHookInstaller {
         var hooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
         var mutated = false
 
-        for spec in eventSpecs {
-            let existingGroups = hooksObject[spec.name] as? [Any] ?? []
+        for eventName in managedEventNames {
+            let existingGroups = hooksObject[eventName] as? [Any] ?? []
             let cleanedGroups = sanitize(groups: existingGroups, managedCommand: managedCommand)
 
             if cleanedGroups.count != existingGroups.count || containsManagedHook(in: existingGroups, managedCommand: managedCommand) {
@@ -143,9 +150,9 @@ public enum CodexHookInstaller {
             }
 
             if cleanedGroups.isEmpty {
-                hooksObject.removeValue(forKey: spec.name)
+                hooksObject.removeValue(forKey: eventName)
             } else {
-                hooksObject[spec.name] = cleanedGroups
+                hooksObject[eventName] = cleanedGroups
             }
         }
 
@@ -156,6 +163,55 @@ public enum CodexHookInstaller {
         rootObject["hooks"] = hooksObject
         let data = try serialize(rootObject)
         return CodexHookFileMutation(contents: data, changed: mutated || data != existingData, hasRemainingHooks: true)
+    }
+
+    public static func hasManagedPermissionRequest(
+        existingData: Data?,
+        managedCommand: String?
+    ) throws -> Bool {
+        guard let existingData else {
+            return false
+        }
+
+        let rootObject = try loadRootObject(from: existingData)
+        let hooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
+        let groups = hooksObject["PermissionRequest"] as? [Any] ?? []
+        return containsManagedHook(in: groups, managedCommand: managedCommand)
+    }
+
+    public static func removeManagedPermissionRequestHooksJSON(
+        existingData: Data?,
+        managedCommand: String?
+    ) throws -> CodexHookFileMutation {
+        guard let existingData else {
+            return CodexHookFileMutation(contents: nil, changed: false, hasRemainingHooks: false)
+        }
+
+        var rootObject = try loadRootObject(from: existingData)
+        var hooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
+        let existingGroups = hooksObject["PermissionRequest"] as? [Any] ?? []
+        guard containsManagedHook(in: existingGroups, managedCommand: managedCommand) else {
+            return CodexHookFileMutation(
+                contents: existingData,
+                changed: false,
+                hasRemainingHooks: !hooksObject.isEmpty
+            )
+        }
+
+        let cleanedGroups = sanitize(groups: existingGroups, managedCommand: managedCommand)
+        if cleanedGroups.isEmpty {
+            hooksObject.removeValue(forKey: "PermissionRequest")
+        } else {
+            hooksObject["PermissionRequest"] = cleanedGroups
+        }
+
+        guard !hooksObject.isEmpty else {
+            return CodexHookFileMutation(contents: nil, changed: true, hasRemainingHooks: false)
+        }
+
+        rootObject["hooks"] = hooksObject
+        let data = try serialize(rootObject)
+        return CodexHookFileMutation(contents: data, changed: data != existingData, hasRemainingHooks: true)
     }
 
     /// Enables the current Codex hooks feature flag and migrates the legacy flag when present.

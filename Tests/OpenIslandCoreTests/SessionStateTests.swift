@@ -959,13 +959,9 @@ struct SessionStateTests {
         #expect(managedStopHook?["statusMessage"] == nil)
 
         let sessionStartGroups = hooks?["SessionStart"] as? [[String: Any]]
-        let permissionGroups = hooks?["PermissionRequest"] as? [[String: Any]]
-        let managedPermissionHook = permissionGroups?
-            .compactMap { $0["hooks"] as? [[String: Any]] }
-            .flatMap { $0 }
-            .first(where: { $0["command"] as? String == "'/tmp/OpenIslandHooks'" })
         #expect(sessionStartGroups?.contains(where: { $0["matcher"] as? String == "startup|resume" }) == true)
-        #expect(managedPermissionHook?["timeout"] as? Int == CodexHookInstaller.managedInteractiveTimeout)
+        #expect(hooks?["UserPromptSubmit"] != nil)
+        #expect(hooks?["PermissionRequest"] == nil)
         #expect(hooks?["PreToolUse"] == nil)
         #expect(hooks?["PostToolUse"] == nil)
     }
@@ -986,6 +982,20 @@ struct SessionStateTests {
                   {
                     "type": "command",
                     "command": "/usr/bin/printf"
+                  }
+                ]
+              }
+            ],
+            "PermissionRequest": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/tmp/old-debug/OpenIslandHooks'"
+                  },
+                  {
+                    "type": "command",
+                    "command": "/usr/bin/reviewer"
                   }
                 ]
               }
@@ -1038,7 +1048,7 @@ struct SessionStateTests {
             .compactMap { $0["command"] as? String } ?? []
 
         #expect(preToolCommands == ["/usr/bin/printf"])
-        #expect(permissionCommands == ["'/tmp/new-release/OpenIslandHooks'"])
+        #expect(permissionCommands == ["/usr/bin/reviewer"])
         #expect(hooks?["PostToolUse"] == nil)
         #expect(stopCommands.contains("/usr/bin/true"))
         #expect(stopCommands.contains("'/tmp/new-release/OpenIslandHooks'"))
@@ -1066,6 +1076,22 @@ struct SessionStateTests {
                   }
                 ]
               }
+            ],
+            "PermissionRequest": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/tmp/OpenIslandHooks'",
+                    "statusMessage": "Managed by Open Island"
+                  },
+                  {
+                    "type": "command",
+                    "command": "/usr/bin/reviewer",
+                    "statusMessage": "Other hook"
+                  }
+                ]
+              }
             ]
           }
         }
@@ -1086,8 +1112,14 @@ struct SessionStateTests {
             .compactMap { $0["hooks"] as? [[String: Any]] }
             .flatMap { $0 }
             .compactMap { $0["command"] as? String } ?? []
+        let permissionGroups = hooks?["PermissionRequest"] as? [[String: Any]]
+        let permissionCommands = permissionGroups?
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap { $0 }
+            .compactMap { $0["command"] as? String } ?? []
 
         #expect(stopCommands == ["/usr/bin/true"])
+        #expect(permissionCommands == ["/usr/bin/reviewer"])
     }
 
     @Test
@@ -1324,12 +1356,39 @@ struct SessionStateTests {
         #expect(try Data(contentsOf: managedHooksBinaryURL) == Data("codex-hook".utf8))
         let hooksData = try Data(contentsOf: installed.hooksURL)
         let installedHooks = try jsonObject(from: hooksData)
-        let installedStopGroups = (installedHooks["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]]
+        let installedHooksByEvent = installedHooks["hooks"] as? [String: Any]
+        let installedStopGroups = installedHooksByEvent?["Stop"] as? [[String: Any]]
         let installedManagedHook = installedStopGroups?
             .compactMap { $0["hooks"] as? [[String: Any]] }
             .flatMap { $0 }
             .first(where: { $0["command"] as? String == CodexHookInstaller.hookCommand(for: managedHooksBinaryURL.path) })
         #expect(installedManagedHook?["statusMessage"] == nil)
+        #expect(installedHooksByEvent?["SessionStart"] != nil)
+        #expect(installedHooksByEvent?["UserPromptSubmit"] != nil)
+        #expect(installedHooksByEvent?["PermissionRequest"] == nil)
+
+        var legacyInstalledHooks = installedHooks
+        var legacyHooksByEvent = installedHooksByEvent ?? [:]
+        legacyHooksByEvent["PermissionRequest"] = [[
+            "hooks": [[
+                "type": "command",
+                "command": CodexHookInstaller.hookCommand(for: managedHooksBinaryURL.path),
+                "timeout": 3_600,
+            ]]
+        ]]
+        legacyInstalledHooks["hooks"] = legacyHooksByEvent
+        let legacyHooksData = try JSONSerialization.data(
+            withJSONObject: legacyInstalledHooks,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try legacyHooksData.write(to: installed.hooksURL, options: .atomic)
+
+        let legacyStatus = try manager.status()
+        #expect(legacyStatus.managedPermissionRequestPresent)
+        let migrated = try manager.migrateToCodexOwnedApprovalsIfNeeded()
+        #expect(!migrated.managedPermissionRequestPresent)
+        let migratedHooks = try jsonObject(from: try Data(contentsOf: migrated.hooksURL))
+        #expect((migratedHooks["hooks"] as? [String: Any])?["PermissionRequest"] == nil)
 
         try FileManager.default.removeItem(at: hooksBinaryURL)
 

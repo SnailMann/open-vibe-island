@@ -563,12 +563,23 @@ final class HookInstallationCoordinator {
             guard let self else { return }
 
             do {
-                let status = try self.codexHookInstallationManager.status(hooksBinaryURL: self.hooksBinaryURL)
+                let status = try self.readCodexHookStatusMigratingLegacyApproval()
                 self.codexHookStatus = status
             } catch {
                 self.onStatusMessage?("Failed to read Codex hook status: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func readCodexHookStatusMigratingLegacyApproval() throws -> CodexHookInstallationStatus {
+        let status = try codexHookInstallationManager.status(hooksBinaryURL: hooksBinaryURL)
+        guard status.managedPermissionRequestPresent else {
+            return status
+        }
+
+        _ = try codexHookInstallationManager.migrateToCodexOwnedApprovalsIfNeeded()
+        onStatusMessage?("Removed the legacy Codex approval hook so Codex Auto-review can handle permissions.")
+        return try codexHookInstallationManager.status(hooksBinaryURL: hooksBinaryURL)
     }
 
     func refreshClaudeHookStatus() {
@@ -624,7 +635,7 @@ final class HookInstallationCoordinator {
             group.addTask { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    let status = try self.codexHookInstallationManager.status(hooksBinaryURL: self.hooksBinaryURL)
+                    let status = try self.readCodexHookStatusMigratingLegacyApproval()
                     self.codexHookStatus = status
                 } catch {
                     self.onStatusMessage?("Failed to read Codex hook status: \(error.localizedDescription)")

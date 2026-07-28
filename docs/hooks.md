@@ -52,7 +52,9 @@ This is meant for per-process launches. Do not set it globally unless you want O
 
 ### Default managed installation
 
-The managed Codex hook installer (`CodexHookInstaller`) installs `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, and `Stop` by default. This keeps the lifecycle hooks low-noise while still allowing OpenIsland to broker Codex's first-class approval requests. Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise.
+The managed Codex hook installer (`CodexHookInstaller`) installs only `SessionStart`, `UserPromptSubmit`, and `Stop`. It intentionally does not install `PermissionRequest`, so Codex remains responsible for approvals and can route eligible requests through its built-in Auto-review flow. Reinstalling or upgrading removes older Open Island-managed `PermissionRequest` entries while preserving unrelated third-party hooks.
+
+Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise. `PermissionRequest` also remains supported by the payload decoder and bridge for user-managed integrations, but it is not part of the managed installation.
 
 The installer chooses the Codex hook feature flag that the local Codex CLI advertises. Newer Codex builds use `[features].hooks = true`; older builds use the legacy `[features].codex_hooks = true`. Status checks recognize both keys, and managed installs migrate between them when the local Codex version changes.
 
@@ -97,7 +99,7 @@ The app can block a command by writing this to stdout:
 
 #### `PermissionRequest`
 
-The managed `PermissionRequest` hook has a 1-hour timeout so the user can approve or deny from the UI.
+Open Island can still decode and answer `PermissionRequest` when a user configures that hook manually. A deciding hook takes ownership of the request, so it bypasses Codex's normal approval flow; the managed installer therefore leaves this event unconfigured. See the official [Codex Hooks](https://learn.chatgpt.com/docs/hooks) and [Auto-review](https://learn.chatgpt.com/docs/sandboxing/auto-review) documentation.
 
 Allow:
 
@@ -127,6 +129,8 @@ Deny:
   }
 }
 ```
+
+Codex currently supports only one-time `allow` or `deny` decisions for this event. It does not support `updatedPermissions`, so the Open Island approval card does not offer a persistent “always allow” action for Codex sessions.
 
 All other Codex events require no stdout response.
 
@@ -311,8 +315,7 @@ Setting `interrupt: true` terminates the current agent turn immediately.
 
 | Source | Event | Timeout |
 |---|---|---|
-| Codex | `PermissionRequest` | **1 hour** (awaits human approval) |
-| Codex | All other managed events | **45 seconds** |
+| Codex | All managed events | **45 seconds** |
 | Claude Code | `PermissionRequest` | **24 hours** (awaits human approval) |
 | Claude Code | All other events | **45 seconds** |
 | Gemini CLI | All events | Bridge default |

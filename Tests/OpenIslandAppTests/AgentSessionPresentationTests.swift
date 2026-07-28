@@ -129,6 +129,29 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
+    func codexDoesNotOfferUnsupportedPersistentPermissionApproval() {
+        let codexSession = AgentSession(
+            id: "codex-session",
+            title: "Codex · worktree",
+            tool: .codex,
+            phase: .waitingForApproval,
+            summary: "Needs approval",
+            updatedAt: .now
+        )
+        let claudeSession = AgentSession(
+            id: "claude-session",
+            title: "Claude · worktree",
+            tool: .claudeCode,
+            phase: .waitingForApproval,
+            summary: "Needs approval",
+            updatedAt: .now
+        )
+
+        #expect(!codexSession.offersPersistentPermissionApproval)
+        #expect(claudeSession.offersPersistentPermissionApproval)
+    }
+
+    @Test
     func completedSessionBecomesV8StaleAfterFiveMinutes() {
         let referenceDate = Date(timeIntervalSince1970: 10_000)
         let session = AgentSession(

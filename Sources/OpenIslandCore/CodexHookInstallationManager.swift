@@ -8,6 +8,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
     public var hooksBinaryURL: URL?
     public var featureFlagEnabled: Bool
     public var managedHooksPresent: Bool
+    public var managedPermissionRequestPresent: Bool
     public var manifest: CodexHookInstallerManifest?
 
     public init(
@@ -18,6 +19,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         hooksBinaryURL: URL?,
         featureFlagEnabled: Bool,
         managedHooksPresent: Bool,
+        managedPermissionRequestPresent: Bool,
         manifest: CodexHookInstallerManifest?
     ) {
         self.codexDirectory = codexDirectory
@@ -27,6 +29,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         self.hooksBinaryURL = hooksBinaryURL
         self.featureFlagEnabled = featureFlagEnabled
         self.managedHooksPresent = managedHooksPresent
+        self.managedPermissionRequestPresent = managedPermissionRequestPresent
         self.manifest = manifest
     }
 }
@@ -63,6 +66,10 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             existingData: hooksData,
             managedCommand: managedCommand
         ))?.changed) == true
+        let managedPermissionRequestPresent = (try? CodexHookInstaller.hasManagedPermissionRequest(
+            existingData: hooksData,
+            managedCommand: managedCommand
+        )) == true
 
         return CodexHookInstallationStatus(
             codexDirectory: codexDirectory,
@@ -72,8 +79,37 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             hooksBinaryURL: resolvedHooksBinaryURL,
             featureFlagEnabled: CodexHookInstaller.isCodexHooksFeatureEnabled(in: configContents),
             managedHooksPresent: managedHooksPresent,
+            managedPermissionRequestPresent: managedPermissionRequestPresent,
             manifest: manifest
         )
+    }
+
+    @discardableResult
+    public func migrateToCodexOwnedApprovalsIfNeeded() throws -> CodexHookInstallationStatus {
+        let hooksURL = codexDirectory.appendingPathComponent("hooks.json")
+        let manifest = try loadManifest(at: resolvedManifestURL())
+        let managedCommand = manifest?.hookCommand
+            ?? resolvedHooksBinaryURL(explicitURL: nil).map { CodexHookInstaller.hookCommand(for: $0.path) }
+        let existingHooks = try? Data(contentsOf: hooksURL)
+        let mutation = try CodexHookInstaller.removeManagedPermissionRequestHooksJSON(
+            existingData: existingHooks,
+            managedCommand: managedCommand
+        )
+
+        guard mutation.changed else {
+            return try status()
+        }
+
+        if fileManager.fileExists(atPath: hooksURL.path) {
+            try backupFile(at: hooksURL)
+        }
+        if let contents = mutation.contents {
+            try contents.write(to: hooksURL, options: .atomic)
+        } else if fileManager.fileExists(atPath: hooksURL.path) {
+            try fileManager.removeItem(at: hooksURL)
+        }
+
+        return try status()
     }
 
     @discardableResult
