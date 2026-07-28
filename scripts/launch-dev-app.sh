@@ -141,4 +141,16 @@ fi
 
 codesign --force --deep --sign "$sign_identity" "$bundle_dir" 2>/dev/null || true
 
+# Re-register the rebuilt bundle before launching it. Replacing files in an
+# existing .app does not consistently notify LaunchServices or Spotlight, which
+# can leave Spotlight and third-party launchers such as Raycast unaware of the
+# development app even though launching by path still works.
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$lsregister" ]; then
+    "$lsregister" -f "$bundle_dir"
+fi
+if command -v mdimport >/dev/null 2>&1; then
+    mdimport "$bundle_dir" >/dev/null 2>&1 || true
+fi
+
 open -na "$bundle_dir"

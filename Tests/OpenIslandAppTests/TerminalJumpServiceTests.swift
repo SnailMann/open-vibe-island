@@ -12,6 +12,10 @@ final class TerminalJumpServiceTests: XCTestCase {
         var values: [(String, [String])] = []
     }
 
+    private final class TmuxInvocationBox: @unchecked Sendable {
+        var values: [(String, [String])] = []
+    }
+
     func testGhosttyJumpScriptActivatesWindowAndRetriesFocusUntilItSticks() {
         let target = JumpTarget(
             terminalApp: "Ghostty",
@@ -310,6 +314,51 @@ final class TerminalJumpServiceTests: XCTestCase {
         XCTAssertEqual(result, "Activated Warp. No precise pane mapping available.")
         XCTAssertEqual(keystroker.callCount, 0)
         XCTAssertEqual(openedArguments.values, [["-b", "dev.warp.Warp-Stable"]])
+    }
+
+    func testWarpTmuxJumpSelectsPaneBeforeActivatingWarp() throws {
+        let openedArguments = OpenedArgumentsBox()
+        let tmuxInvocations = TmuxInvocationBox()
+        let socketPath = "/private/tmp/tmux-501/default"
+        let service = TerminalJumpService(
+            applicationResolver: { id in
+                id == "dev.warp.Warp-Stable" ? URL(fileURLWithPath: "/Applications/Warp.app") : nil
+            },
+            appRunningChecker: { id in id == "dev.warp.Warp-Stable" },
+            openAction: { arguments in openedArguments.values.append(arguments) },
+            appleScriptRunner: { _ in "" },
+            tmuxPathResolver: { "/test/tmux" },
+            tmuxCommandRunner: { executable, arguments in
+                tmuxInvocations.values.append((executable, arguments))
+                return arguments.contains("list-clients") ? "/dev/ttys001\n" : ""
+            }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "Warp",
+                workspaceName: "open-vibe-island",
+                paneTitle: "Codex open-vibe-island",
+                workingDirectory: "/Users/test/open-vibe-island",
+                terminalTTY: "/dev/ttys010",
+                tmuxTarget: "dev:2.1",
+                tmuxSocketPath: socketPath
+            )
+        )
+
+        XCTAssertEqual(result, "Focused the matching tmux pane and activated Warp.")
+        XCTAssertEqual(openedArguments.values, [["-b", "dev.warp.Warp-Stable"]])
+        XCTAssertEqual(tmuxInvocations.values.count, 4)
+        XCTAssertTrue(tmuxInvocations.values.allSatisfy { $0.0 == "/test/tmux" })
+        XCTAssertEqual(
+            tmuxInvocations.values.map(\.1),
+            [
+                ["-S", socketPath, "list-clients", "-F", "#{client_tty}"],
+                ["-S", socketPath, "switch-client", "-c", "/dev/ttys001", "-t", "dev"],
+                ["-S", socketPath, "select-window", "-t", "dev:2"],
+                ["-S", socketPath, "select-pane", "-t", "dev:2.1"],
+            ]
+        )
     }
 
     func testUnknownTerminalAppFallsBackToFinderInsteadOfFirstInstalledTerminal() throws {

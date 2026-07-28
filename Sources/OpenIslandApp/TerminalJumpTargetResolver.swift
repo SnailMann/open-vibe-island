@@ -57,9 +57,13 @@ struct TerminalJumpTargetResolver {
         }
         // Tmux candidates: sessions that already have a tmuxTarget, OR sessions
         // whose terminalTTY maps to a tmux pane (e.g. OpenCode sessions created
-        // by BridgeServer without tmux info). We discover the mapping below.
-        let tmuxSessions = sessions.filter {
-            $0.jumpTarget?.tmuxTarget != nil || $0.jumpTarget?.terminalTTY != nil
+        // by BridgeServer without tmux info), OR sessions whose live process
+        // has tmux metadata even though the restored hook record has no jump
+        // target yet.
+        let tmuxSessions = sessions.filter { session in
+            session.jumpTarget?.tmuxTarget != nil
+                || session.jumpTarget?.terminalTTY != nil
+                || matchingActiveProcess(for: session, in: activeProcesses)?.tmuxTarget != nil
         }
 
         var jumpTargetUpdates: [String: JumpTarget] = [:]
@@ -69,10 +73,18 @@ struct TerminalJumpTargetResolver {
         if !tmuxSessions.isEmpty {
             let tmuxSnapshots = fetchTmuxSnapshots()
             if let snapshots = tmuxSnapshots {
-                let matched = matchTmuxSnapshots(snapshots, to: tmuxSessions)
+                let matched = matchTmuxSnapshots(
+                    snapshots,
+                    to: tmuxSessions,
+                    activeProcesses: activeProcesses
+                )
                 for (sessionID, snapshot) in matched {
                     if let session = sessions.first(where: { $0.id == sessionID }),
-                       let corrected = correctedTmuxJumpTarget(for: session, snapshot: snapshot) {
+                       let corrected = correctedTmuxJumpTarget(
+                           for: session,
+                           snapshot: snapshot,
+                           activeProcesses: activeProcesses
+                       ) {
                         jumpTargetUpdates[sessionID] = corrected
                     }
                 }
@@ -231,9 +243,10 @@ struct TerminalJumpTargetResolver {
 
     // MARK: - Tmux matching
 
-    private func matchTmuxSnapshots(
+    func matchTmuxSnapshots(
         _ snapshots: [TmuxPaneSnapshot],
-        to sessions: [AgentSession]
+        to sessions: [AgentSession],
+        activeProcesses: [ActiveProcessSnapshot]
     ) -> [String: TmuxPaneSnapshot] {
         var assignments: [String: TmuxPaneSnapshot] = [:]
 
@@ -256,6 +269,22 @@ struct TerminalJumpTargetResolver {
                 continue
             }
 
+            // Live-process match. This recovers restored sessions that have no
+            // hook-provided jump target yet, and corrects stale targets created
+            // from a tmux server's original terminal environment.
+            if let session = sessions.first(where: {
+                guard assignments[$0.id] == nil,
+                      let process = matchingActiveProcess(for: $0, in: activeProcesses) else {
+                    return false
+                }
+
+                return nonEmptyValue(process.tmuxTarget) == snapshot.paneID
+                    || normalizedTTYForMatching(process.terminalTTY) == normalizedTTYForMatching(snapshot.tty)
+            }) {
+                assignments[session.id] = snapshot
+                continue
+            }
+
             // Title match
             if let session = sessions.first(where: {
                 assignments[$0.id] == nil
@@ -268,15 +297,32 @@ struct TerminalJumpTargetResolver {
         return assignments
     }
 
-    private func correctedTmuxJumpTarget(
+    func correctedTmuxJumpTarget(
         for session: AgentSession,
-        snapshot: TmuxPaneSnapshot
+        snapshot: TmuxPaneSnapshot,
+        activeProcesses: [ActiveProcessSnapshot]
     ) -> JumpTarget? {
-        guard var jumpTarget = session.jumpTarget else {
-            return nil
+        let matchingProcess = activeProcesses.first {
+            nonEmptyValue($0.tmuxTarget) == snapshot.paneID
+        } ?? activeProcesses.first {
+            normalizedTTYForMatching($0.terminalTTY) == normalizedTTYForMatching(snapshot.tty)
         }
+        let workingDirectory = matchingProcess?.workingDirectory
+            ?? session.jumpTarget?.workingDirectory
+        let workspaceName = workingDirectory.map {
+            WorkspaceNameResolver.workspaceName(for: $0)
+        } ?? session.jumpTarget?.workspaceName ?? "Workspace"
 
-        var changed = false
+        var jumpTarget = session.jumpTarget ?? JumpTarget(
+            terminalApp: nonEmptyValue(matchingProcess?.terminalApp) ?? "Unknown",
+            workspaceName: workspaceName,
+            paneTitle: nonEmptyValue(snapshot.title) ?? session.title,
+            workingDirectory: workingDirectory,
+            terminalTTY: snapshot.tty,
+            tmuxTarget: snapshot.paneID,
+            tmuxSocketPath: matchingProcess?.tmuxSocketPath
+        )
+        var changed = session.jumpTarget == nil
 
         if nonEmptyValue(jumpTarget.terminalTTY) != snapshot.tty {
             jumpTarget.terminalTTY = snapshot.tty
@@ -294,7 +340,49 @@ struct TerminalJumpTargetResolver {
             changed = true
         }
 
+        if let terminalApp = nonEmptyValue(matchingProcess?.terminalApp),
+           normalizedTerminalName(for: jumpTarget.terminalApp) != terminalApp.lowercased() {
+            jumpTarget.terminalApp = terminalApp
+            changed = true
+        }
+
+        if let socketPath = nonEmptyValue(matchingProcess?.tmuxSocketPath),
+           nonEmptyValue(jumpTarget.tmuxSocketPath) != socketPath {
+            jumpTarget.tmuxSocketPath = socketPath
+            changed = true
+        }
+
         return changed ? jumpTarget : nil
+    }
+
+    private func matchingActiveProcess(
+        for session: AgentSession,
+        in activeProcesses: [ActiveProcessSnapshot]
+    ) -> ActiveProcessSnapshot? {
+        if let exact = activeProcesses.first(where: {
+            $0.tool == session.tool
+                && nonEmptyValue($0.sessionID) == session.id
+        }) {
+            return exact
+        }
+
+        if let transcriptPath = nonEmptyValue(session.claudeMetadata?.transcriptPath),
+           let transcriptMatch = activeProcesses.first(where: {
+               $0.tool == session.tool
+                   && nonEmptyValue($0.transcriptPath) == transcriptPath
+           }) {
+            return transcriptMatch
+        }
+
+        if let terminalTTY = normalizedTTYForMatching(session.jumpTarget?.terminalTTY),
+           let ttyMatch = activeProcesses.first(where: {
+               $0.tool == session.tool
+                   && normalizedTTYForMatching($0.terminalTTY) == terminalTTY
+           }) {
+            return ttyMatch
+        }
+
+        return nil
     }
 
     // MARK: - Tmux fetching
@@ -795,6 +883,13 @@ struct TerminalJumpTargetResolver {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else { return nil }
         return URL(fileURLWithPath: value).standardizedFileURL.path.lowercased()
+    }
+
+    private func normalizedTTYForMatching(_ value: String?) -> String? {
+        guard let value = nonEmptyValue(value) else {
+            return nil
+        }
+        return value.hasPrefix("/dev/") ? value : "/dev/\(value)"
     }
 
     private func nonEmptyValue(_ value: String?) -> String? {
