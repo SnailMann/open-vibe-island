@@ -271,19 +271,28 @@ final class AppModel {
     var autoExpandPermissionRequests: Bool = true {
         didSet {
             guard hasFinishedInit, autoExpandPermissionRequests != oldValue else { return }
-            UserDefaults.standard.set(autoExpandPermissionRequests, forKey: Self.autoExpandPermissionRequestsDefaultsKey)
+            automaticExpansionDefaults.set(
+                autoExpandPermissionRequests,
+                forKey: Self.autoExpandPermissionRequestsDefaultsKey
+            )
         }
     }
     var autoExpandQuestions: Bool = true {
         didSet {
             guard hasFinishedInit, autoExpandQuestions != oldValue else { return }
-            UserDefaults.standard.set(autoExpandQuestions, forKey: Self.autoExpandQuestionsDefaultsKey)
+            automaticExpansionDefaults.set(
+                autoExpandQuestions,
+                forKey: Self.autoExpandQuestionsDefaultsKey
+            )
         }
     }
     var autoExpandCompletions: Bool = true {
         didSet {
             guard hasFinishedInit, autoExpandCompletions != oldValue else { return }
-            UserDefaults.standard.set(autoExpandCompletions, forKey: Self.autoExpandCompletionsDefaultsKey)
+            automaticExpansionDefaults.set(
+                autoExpandCompletions,
+                forKey: Self.autoExpandCompletionsDefaultsKey
+            )
         }
     }
     var launchAtLoginEnabled: Bool = false {
@@ -542,6 +551,8 @@ final class AppModel {
     @ObservationIgnored
     private let isNotificationSessionAlreadyFrontmost: @Sendable (AgentSession) async -> Bool
 
+    @ObservationIgnored
+    private let automaticExpansionDefaults: UserDefaults
 
     @ObservationIgnored
     var harnessRuntimeMonitor: HarnessRuntimeMonitor? {
@@ -607,15 +618,19 @@ final class AppModel {
         },
         isNotificationSessionAlreadyFrontmost: @escaping @Sendable (AgentSession) async -> Bool = { session in
             await ForegroundTerminalSessionProbe().matches(session: session)
-        }
+        },
+        automaticExpansionDefaults: UserDefaults = .standard
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
+        self.automaticExpansionDefaults = automaticExpansionDefaults
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
             Self.hapticFeedbackEnabledDefaultsKey: false,
             Self.completionReplyEnabledDefaultsKey: false,
             Self.suppressFrontmostNotificationsDefaultsKey: true,
+        ])
+        automaticExpansionDefaults.register(defaults: [
             Self.autoExpandPermissionRequestsDefaultsKey: true,
             Self.autoExpandQuestionsDefaultsKey: true,
             Self.autoExpandCompletionsDefaultsKey: true,
@@ -625,9 +640,15 @@ final class AppModel {
         showDockIcon = UserDefaults.standard.bool(forKey: Self.showDockIconDefaultsKey)
         hapticFeedbackEnabled = UserDefaults.standard.bool(forKey: Self.hapticFeedbackEnabledDefaultsKey)
         suppressFrontmostNotifications = UserDefaults.standard.bool(forKey: Self.suppressFrontmostNotificationsDefaultsKey)
-        autoExpandPermissionRequests = UserDefaults.standard.bool(forKey: Self.autoExpandPermissionRequestsDefaultsKey)
-        autoExpandQuestions = UserDefaults.standard.bool(forKey: Self.autoExpandQuestionsDefaultsKey)
-        autoExpandCompletions = UserDefaults.standard.bool(forKey: Self.autoExpandCompletionsDefaultsKey)
+        autoExpandPermissionRequests = automaticExpansionDefaults.bool(
+            forKey: Self.autoExpandPermissionRequestsDefaultsKey
+        )
+        autoExpandQuestions = automaticExpansionDefaults.bool(
+            forKey: Self.autoExpandQuestionsDefaultsKey
+        )
+        autoExpandCompletions = automaticExpansionDefaults.bool(
+            forKey: Self.autoExpandCompletionsDefaultsKey
+        )
         if UserDefaults.standard.object(forKey: Self.showCodexUsageDefaultsKey) != nil {
             showCodexUsage = UserDefaults.standard.bool(forKey: Self.showCodexUsageDefaultsKey)
         } else {
@@ -1569,6 +1590,7 @@ final class AppModel {
            let surface = IslandSurface.notificationSurface(for: event) {
             scheduleNotificationSurfacePresentationIfNeeded(
                 surface,
+                event: event,
                 wasAlreadyCompleted: wasAlreadyCompleted,
                 ingress: ingress
             )
@@ -1590,6 +1612,7 @@ final class AppModel {
 
     private func scheduleNotificationSurfacePresentationIfNeeded(
         _ surface: IslandSurface,
+        event: AgentEvent,
         wasAlreadyCompleted: Bool,
         ingress: TrackedEventIngress
     ) {
@@ -1614,6 +1637,7 @@ final class AppModel {
             let shouldSuppress = await self.isNotificationSessionAlreadyFrontmost(session)
             guard !Task.isCancelled,
                   !shouldSuppress,
+                  self.shouldAutoExpand(for: event),
                   self.notificationSurfaceIsEligibleForPresentation(surface, ingress: ingress) else {
                 return
             }
