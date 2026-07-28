@@ -23,7 +23,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 | Agent | Status | Notes |
 |---|---|---|
 | **Claude Code** | Supported | Hook integration, JSONL session discovery, status line bridge, usage tracking |
-| **Codex** | Supported | Full hook integration (SessionStart, UserPromptSubmit, Stop), usage tracking |
+| **Codex** | Supported | Lifecycle hooks (SessionStart, UserPromptSubmit, Stop), Codex-owned approvals/Auto-review, usage tracking |
 | **OpenCode** | Supported | JS plugin integration, permission/question flows, process detection |
 | **Qoder** | Supported | Claude Code fork — same hook format, config at `~/.qoder/settings.json` |
 | **Qwen Code** | Supported | Claude Code fork — same hook format, config at `~/.qwen/settings.json` |

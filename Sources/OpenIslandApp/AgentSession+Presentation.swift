@@ -225,6 +225,10 @@ extension AgentSession {
         }
     }
 
+    var offersPersistentPermissionApproval: Bool {
+        tool != .codex
+    }
+
     var notificationHeaderPromptLineText: String? {
         guard phase != .completed else {
             return nil
