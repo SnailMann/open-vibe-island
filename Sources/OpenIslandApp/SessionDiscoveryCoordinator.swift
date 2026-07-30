@@ -431,12 +431,16 @@ final class SessionDiscoveryCoordinator {
         }
     }
 
-    private func applyCodexAppRediscovery(_ records: [CodexTrackedSessionRecord]) {
+    private func applyCodexAppRediscovery(
+        _ records: [CodexTrackedSessionRecord],
+        now: Date = .now
+    ) {
         let existingIDs = Set(state.sessions.filter { $0.tool == .codex }.map(\.id))
         let existingPaths = Set(state.sessions.compactMap(\.codexMetadata?.transcriptPath))
 
         let newRecords = records.filter { record in
-            !existingIDs.contains(record.sessionID)
+            CodexAppSessionReconciler.shouldRediscover(record, now: now)
+                && !existingIDs.contains(record.sessionID)
                 && (record.codexMetadata?.transcriptPath).map { !existingPaths.contains($0) } ?? true
         }
         guard !newRecords.isEmpty else { return }

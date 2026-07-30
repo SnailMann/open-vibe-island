@@ -257,6 +257,24 @@ public enum CodexArchivedSessionIndex: Sendable {
 }
 
 public enum CodexAppSessionReconciler {
+    /// Completed Codex.app turns stay actionable for a short grace period,
+    /// then stop representing a live agent session even if their rollout file
+    /// remains under `~/.codex/sessions`.
+    public static let completedStalenessTimeout: TimeInterval = 10 * 60
+
+    /// Whether a rollout discovered without an authoritative app-server event
+    /// is still eligible to re-enter the live session list.
+    public static func shouldRediscover(
+        _ record: CodexTrackedSessionRecord,
+        now: Date = .now
+    ) -> Bool {
+        guard record.phase == .completed else {
+            return true
+        }
+
+        return record.updatedAt.addingTimeInterval(completedStalenessTimeout) >= now
+    }
+
     public static func reconciliationEvents(
         for sessions: [AgentSession],
         archivedSessionIDs: Set<String>,
