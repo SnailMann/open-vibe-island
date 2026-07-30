@@ -691,6 +691,49 @@ struct CodexSessionTrackingTests {
     }
 
     @Test
+    func codexAppRediscoveryRejectsStaleCompletedRecords() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let record = CodexTrackedSessionRecord(
+            sessionID: "codex-session-stale-completed",
+            title: "Codex · open-island",
+            origin: .live,
+            summary: "Turn completed.",
+            phase: .completed,
+            updatedAt: now.addingTimeInterval(
+                -CodexAppSessionReconciler.completedStalenessTimeout - 1
+            )
+        )
+
+        #expect(!CodexAppSessionReconciler.shouldRediscover(record, now: now))
+    }
+
+    @Test
+    func codexAppRediscoveryKeepsRecentCompletedAndRunningRecords() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let recentCompleted = CodexTrackedSessionRecord(
+            sessionID: "codex-session-recent-completed",
+            title: "Codex · open-island",
+            origin: .live,
+            summary: "Turn completed.",
+            phase: .completed,
+            updatedAt: now.addingTimeInterval(
+                -CodexAppSessionReconciler.completedStalenessTimeout
+            )
+        )
+        let oldRunning = CodexTrackedSessionRecord(
+            sessionID: "codex-session-old-running",
+            title: "Codex · open-island",
+            origin: .live,
+            summary: "Codex is working…",
+            phase: .running,
+            updatedAt: now.addingTimeInterval(-86_400)
+        )
+
+        #expect(CodexAppSessionReconciler.shouldRediscover(recentCompleted, now: now))
+        #expect(CodexAppSessionReconciler.shouldRediscover(oldRunning, now: now))
+    }
+
+    @Test
     func codexRolloutReducerMarksPrimaryRateLimitWhileAwaitingAgentResponse() {
         let initialSnapshot = CodexRolloutReducer.snapshot(for: [
             rolloutLine(
