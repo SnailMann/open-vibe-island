@@ -70,6 +70,10 @@ public final class BridgeServer: @unchecked Sendable {
     private var pendingClaudeInteractions: [String: PendingClaudeInteraction] = [:]
     private var pendingOpenCodeInteractions: [String: PendingOpenCodeInteraction] = [:]
     private var pendingCursorInteractions: [String: PendingCursorInteraction] = [:]
+    /// Briefly remembers cancellation controls that arrive before their original hook request.
+    /// 短暂记录先于原 hook 请求到达的取消控制，消除双连接之间的到达顺序竞态。
+    private var pendingHookCancellations: [String: Date] = [:]
+    private static let pendingHookCancellationTTL: TimeInterval = 5
     /// Caches Agent tool description from preToolUse for use by the next subagentStart.
     private var pendingAgentDescriptions: [String: String] = [:]
     /// Maps toolUseID → temporary task ID for TaskCreate, so postToolUse can update with real ID.
@@ -186,6 +190,7 @@ public final class BridgeServer: @unchecked Sendable {
         pendingTaskCreations.removeAll()
         pendingOpenCodeInteractions.removeAll()
         pendingCursorInteractions.removeAll()
+        pendingHookCancellations.removeAll()
 
         let activeConnections = Array(clients.values)
         activeConnections.forEach { $0.readSource.cancel() }
@@ -466,18 +471,23 @@ public final class BridgeServer: @unchecked Sendable {
             send(.response(.acknowledged), to: clientID)
 
         case let .processCodexHook(payload):
+            guard !consumePendingHookCancellation(for: payload.sessionID, clientID: clientID) else { return }
             handleCodexHook(payload, from: clientID)
 
         case let .processClaudeHook(payload):
+            guard !consumePendingHookCancellation(for: payload.sessionID, clientID: clientID) else { return }
             handleClaudeHook(payload, from: clientID)
 
         case let .processOpenCodeHook(payload):
+            guard !consumePendingHookCancellation(for: payload.sessionID, clientID: clientID) else { return }
             handleOpenCodeHook(payload, from: clientID)
 
         case let .processCursorHook(payload):
+            guard !consumePendingHookCancellation(for: payload.sessionID, clientID: clientID) else { return }
             handleCursorHook(payload, from: clientID)
 
         case let .processGeminiHook(payload):
+            guard !consumePendingHookCancellation(for: payload.sessionID, clientID: clientID) else { return }
             handleGeminiHook(payload, from: clientID)
         }
     }
@@ -2196,6 +2206,7 @@ public final class BridgeServer: @unchecked Sendable {
         let taskCreationCount: Int
         let interactionCount: Int
         let activeClientCount: Int
+        let cancellationCount: Int
 
         var totalCount: Int {
             toolContextCount + agentDescriptionCount + taskCreationCount
@@ -2211,7 +2222,8 @@ public final class BridgeServer: @unchecked Sendable {
                 agentDescriptionCount: pendingAgentDescriptions.count,
                 taskCreationCount: pendingTaskCreations.count,
                 interactionCount: pendingClaudeInteractions.count,
-                activeClientCount: clients.count
+                activeClientCount: clients.count,
+                cancellationCount: pendingHookCancellations.count
             )
         }
     }
@@ -2691,6 +2703,7 @@ public final class BridgeServer: @unchecked Sendable {
     /// Removes every blocking bridge client associated with a hook session.
     /// 清理指定 hook 会话关联的所有阻塞 bridge 客户端。
     private func cancelPendingRequest(for sessionID: String, controlClientID: UUID) {
+        discardExpiredHookCancellations()
         let pendingClientIDs = Set([
             pendingApprovals[sessionID]?.clientID,
             pendingClaudeInteractions[sessionID]?.clientID,
@@ -2698,8 +2711,32 @@ public final class BridgeServer: @unchecked Sendable {
             pendingCursorInteractions[sessionID]?.clientID,
         ].compactMap { $0 })
 
+        if pendingClientIDs.isEmpty {
+            pendingHookCancellations[sessionID] = .now
+        }
+
         for pendingClientID in pendingClientIDs where pendingClientID != controlClientID {
             removeClient(pendingClientID)
+        }
+    }
+
+    /// Consumes a cancellation tombstone when the original hook loses the connection race.
+    /// 原 hook 在双连接竞态中后到时消费取消标记，并以 acknowledged 方式 fail-open。
+    private func consumePendingHookCancellation(for sessionID: String, clientID: UUID) -> Bool {
+        discardExpiredHookCancellations()
+        guard pendingHookCancellations.removeValue(forKey: sessionID) != nil else {
+            return false
+        }
+
+        send(.response(.acknowledged), to: clientID)
+        return true
+    }
+
+    /// Bounds cancellation tombstones so a later resumed session cannot inherit stale state.
+    /// 限制取消标记存活时间，避免之后恢复的同 ID 会话继承陈旧状态。
+    private func discardExpiredHookCancellations(now: Date = .now) {
+        pendingHookCancellations = pendingHookCancellations.filter { _, timestamp in
+            now.timeIntervalSince(timestamp) <= Self.pendingHookCancellationTTL
         }
     }
 }
