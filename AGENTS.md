@@ -34,6 +34,12 @@ Keep all work incremental, reviewable, and reversible. Every meaningful round of
 - If a conflict makes the task ambiguous or risky, stop and ask before proceeding.
 - Never use destructive Git commands such as `git reset --hard` without explicit approval.
 
+## GitHub Authentication Guardrails
+
+- Treat `gh auth status` failures inside a restricted sandbox as inconclusive on macOS because the sandbox may prevent `gh` from reading its token from Keychain.
+- Before telling the user that GitHub authentication expired, rerun `gh auth status` outside the sandbox and make a non-mutating `gh api user` request in the same environment.
+- Only ask the user to reauthenticate when the outside-sandbox API probe also fails with an authentication error. Never print or log the token while diagnosing credential access.
+
 ## Engineering Rules
 
 - Prefer small end-to-end slices over large speculative scaffolding.
