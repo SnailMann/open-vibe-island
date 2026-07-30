@@ -31,14 +31,11 @@ struct OpenIslandHooksCLI {
 
     static func main() {
         do {
-            // Allow wrappers to delegate one child process away from Open Island without changing global hook installation.
-            // 允许外部控制器只让当前子进程跳过 Open Island hook，不影响全局安装状态。
-            if HookSkipConfiguration.shouldSkipHooks(environment: ProcessInfo.processInfo.environment) {
-                return
-            }
-
-            let input = FileHandle.standardInput.readDataToEndOfFile()
-            guard !input.isEmpty else {
+            let environment = ProcessInfo.processInfo.environment
+            guard let input = HookSkipConfiguration.readHookInput(
+                environment: environment,
+                reader: { FileHandle.standardInput.readDataToEndOfFile() }
+            ) else {
                 return
             }
 
@@ -47,6 +44,10 @@ struct OpenIslandHooksCLI {
             let sourceString = rawSourceString(arguments: arguments)
             let decoder = JSONDecoder()
             let client = BridgeCommandClient(socketURL: BridgeSocketLocation.currentURL())
+            // Permission hooks may wait for user input for hours; stop waiting as soon as their agent process exits.
+            // 权限 hook 可能等待用户操作数小时；所属 agent 进程退出后立即取消，避免产生孤儿进程。
+            let parentProcessMonitor = HookParentProcessMonitor(environment: environment)
+            let shouldCancel = { parentProcessMonitor.hasExited }
 
             switch source {
             case .codex:
@@ -58,7 +59,11 @@ struct OpenIslandHooksCLI {
                     ? interactiveCodexHookTimeout
                     : 45
 
-                guard let response = try? client.send(.processCodexHook(payload), timeout: timeout) else {
+                guard let response = try? client.send(
+                    .processCodexHook(payload),
+                    timeout: timeout,
+                    shouldCancel: shouldCancel
+                ) else {
                     logStderr("bridge unavailable for codex hook (\(payload.hookEventName.rawValue))")
                     return
                 }
@@ -76,7 +81,11 @@ struct OpenIslandHooksCLI {
                     ? interactiveClaudeHookTimeout
                     : 45
 
-                guard let response = try? client.send(.processClaudeHook(payload), timeout: timeout) else {
+                guard let response = try? client.send(
+                    .processClaudeHook(payload),
+                    timeout: timeout,
+                    shouldCancel: shouldCancel
+                ) else {
                     logStderr("bridge unavailable for claude hook (\(payload.hookEventName.rawValue))")
                     return
                 }
@@ -91,7 +100,11 @@ struct OpenIslandHooksCLI {
                     ? Self.interactiveClaudeHookTimeout
                     : 45
 
-                guard let response = try? client.send(.processCursorHook(payload), timeout: timeout) else {
+                guard let response = try? client.send(
+                    .processCursorHook(payload),
+                    timeout: timeout,
+                    shouldCancel: shouldCancel
+                ) else {
                     return
                 }
 
@@ -106,7 +119,11 @@ struct OpenIslandHooksCLI {
                     .decode(GeminiHookPayload.self, from: input)
                     .withRuntimeContext(environment: ProcessInfo.processInfo.environment)
 
-                _ = try? client.send(.processGeminiHook(payload), timeout: 45)
+                _ = try? client.send(
+                    .processGeminiHook(payload),
+                    timeout: 45,
+                    shouldCancel: shouldCancel
+                )
             }
         } catch {
             // Hooks should fail open so the CLI continues working even if the bridge is unavailable.

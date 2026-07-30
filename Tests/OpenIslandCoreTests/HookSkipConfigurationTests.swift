@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import OpenIslandCore
 
@@ -35,5 +36,36 @@ struct HookSkipConfigurationTests {
         }
 
         #expect(!HookSkipConfiguration.shouldSkipHooks(environment: [:]))
+    }
+
+    /// Drains stdin even in skip mode so large hook payloads cannot hit a closed pipe.
+    /// 跳过 hook 时仍消费 stdin，避免大 payload 写入已关闭管道。
+    @Test
+    func readHookInputDrainsPayloadBeforeSkipping() {
+        var didReadInput = false
+
+        let input = HookSkipConfiguration.readHookInput(
+            environment: [HookSkipConfiguration.openIslandSkipKey: "1"],
+            reader: {
+                didReadInput = true
+                return Data("payload".utf8)
+            }
+        )
+
+        #expect(didReadInput)
+        #expect(input == nil)
+    }
+
+    /// Returns non-empty stdin unchanged when hooks are enabled.
+    /// hook 启用时原样返回非空 stdin。
+    @Test
+    func readHookInputReturnsPayloadWhenEnabled() {
+        let expected = Data("payload".utf8)
+        let input = HookSkipConfiguration.readHookInput(
+            environment: [:],
+            reader: { expected }
+        )
+
+        #expect(input == expected)
     }
 }

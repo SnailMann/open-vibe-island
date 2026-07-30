@@ -38,6 +38,7 @@ public enum BridgeSocketLocation {
 
 public enum BridgeTransportError: Error, LocalizedError {
     case alreadyConnected
+    case cancelled
     case notConnected
     case malformedEnvelope
     case responseTimedOut
@@ -49,6 +50,8 @@ public enum BridgeTransportError: Error, LocalizedError {
         switch self {
         case .alreadyConnected:
             "The bridge client is already connected."
+        case .cancelled:
+            "The bridge request was cancelled because its owning process exited."
         case .notConnected:
             "The bridge client is not connected."
         case .malformedEnvelope:
@@ -81,6 +84,7 @@ public enum BridgeClientRole: String, Codable, Sendable {
 
 public enum BridgeCommand: Equatable, Codable, Sendable {
     case registerClient(role: BridgeClientRole)
+    case cancelPendingRequest(sessionID: String)
     case requestQuestion(sessionID: String, prompt: QuestionPrompt)
     case resolvePermission(sessionID: String, resolution: PermissionResolution)
     case answerQuestion(sessionID: String, response: QuestionPromptResponse)
@@ -106,6 +110,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
 
     private enum CommandType: String, Codable {
         case registerClient
+        case cancelPendingRequest
         case requestQuestion
         case resolvePermission
         case answerQuestion
@@ -123,6 +128,8 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         switch type {
         case .registerClient:
             self = .registerClient(role: try container.decode(BridgeClientRole.self, forKey: .role))
+        case .cancelPendingRequest:
+            self = .cancelPendingRequest(sessionID: try container.decode(String.self, forKey: .sessionID))
         case .requestQuestion:
             self = .requestQuestion(
                 sessionID: try container.decode(String.self, forKey: .sessionID),
@@ -158,6 +165,9 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case let .registerClient(role):
             try container.encode(CommandType.registerClient, forKey: .type)
             try container.encode(role, forKey: .role)
+        case let .cancelPendingRequest(sessionID):
+            try container.encode(CommandType.cancelPendingRequest, forKey: .type)
+            try container.encode(sessionID, forKey: .sessionID)
         case let .requestQuestion(sessionID, prompt):
             try container.encode(CommandType.requestQuestion, forKey: .type)
             try container.encode(sessionID, forKey: .sessionID)

@@ -274,6 +274,11 @@ public final class BridgeServer: @unchecked Sendable {
                     for envelope in envelopes {
                         if case let .command(command) = envelope {
                             handle(command, from: clientID)
+                            // A command may explicitly remove this connection; never restore its stale local copy.
+                            // 命令处理可能主动移除当前连接，禁止后续循环把局部旧副本重新写回 clients。
+                            guard clients[clientID] != nil else {
+                                return
+                            }
                         }
                     }
                 } catch {
@@ -308,6 +313,12 @@ public final class BridgeServer: @unchecked Sendable {
 
             client.role = role
             clients[clientID] = client
+            send(.response(.acknowledged), to: clientID)
+
+        case let .cancelPendingRequest(sessionID):
+            // Cancellation arrives on a short-lived control connection and removes the original blocking client.
+            // 取消命令通过短命控制连接到达，并据 sessionID 移除原阻塞连接。
+            cancelPendingRequest(for: sessionID, controlClientID: clientID)
             send(.response(.acknowledged), to: clientID)
 
         case let .requestQuestion(sessionID, prompt):
@@ -2183,6 +2194,8 @@ public final class BridgeServer: @unchecked Sendable {
         let toolContextCount: Int
         let agentDescriptionCount: Int
         let taskCreationCount: Int
+        let interactionCount: Int
+        let activeClientCount: Int
 
         var totalCount: Int {
             toolContextCount + agentDescriptionCount + taskCreationCount
@@ -2196,7 +2209,9 @@ public final class BridgeServer: @unchecked Sendable {
             PendingClaudeStateSnapshot(
                 toolContextCount: pendingClaudeToolContexts.count,
                 agentDescriptionCount: pendingAgentDescriptions.count,
-                taskCreationCount: pendingTaskCreations.count
+                taskCreationCount: pendingTaskCreations.count,
+                interactionCount: pendingClaudeInteractions.count,
+                activeClientCount: clients.count
             )
         }
     }
@@ -2671,6 +2686,21 @@ public final class BridgeServer: @unchecked Sendable {
         }
 
         client.readSource.cancel()
+    }
+
+    /// Removes every blocking bridge client associated with a hook session.
+    /// 清理指定 hook 会话关联的所有阻塞 bridge 客户端。
+    private func cancelPendingRequest(for sessionID: String, controlClientID: UUID) {
+        let pendingClientIDs = Set([
+            pendingApprovals[sessionID]?.clientID,
+            pendingClaudeInteractions[sessionID]?.clientID,
+            pendingOpenCodeInteractions[sessionID]?.clientID,
+            pendingCursorInteractions[sessionID]?.clientID,
+        ].compactMap { $0 })
+
+        for pendingClientID in pendingClientIDs where pendingClientID != controlClientID {
+            removeClient(pendingClientID)
+        }
     }
 }
 
