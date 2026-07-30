@@ -17,6 +17,20 @@ public enum HookSkipConfiguration {
             || isTruthy(environment[legacyVibeIslandSkipKey])
     }
 
+    /// Reads the complete hook payload before honoring skip mode so the agent never writes into a closed pipe.
+    /// 即使当前进程要求跳过 hook，也先消费完整 stdin，避免 agent 写入已关闭管道而触发 EPIPE。
+    public static func readHookInput(
+        environment: [String: String],
+        reader: () -> Data
+    ) -> Data? {
+        let input = reader()
+        guard !shouldSkipHooks(environment: environment), !input.isEmpty else {
+            return nil
+        }
+
+        return input
+    }
+
     /// Interprets common shell-friendly truthy values and treats everything else as false.
     /// 只接受常见 shell 友好的真值，其它值都按 false 处理。
     private static func isTruthy(_ value: String?) -> Bool {

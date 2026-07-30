@@ -24,13 +24,15 @@ Agent
 
 ## Skip Hooks For Delegated Control
 
-Set `OPEN_ISLAND_SKIP_HOOKS=1` on a child agent process when another local controller intentionally owns permission handling for that run. The hook CLI exits immediately without reading or forwarding the payload, so the agent continues without Open Island UI intervention.
+Set `OPEN_ISLAND_SKIP_HOOKS=1` on a child agent process when another local controller intentionally owns permission handling for that run. The hook CLI consumes the complete stdin payload and then exits without forwarding it, so the agent continues without Open Island UI intervention and never writes into a prematurely closed pipe.
 
 `VIBE_ISLAND_SKIP=1` is also recognized as a legacy compatibility alias.
 
 This is meant for per-process launches. Do not set it globally unless you want Open Island hooks disabled for every agent started from that environment.
 
-**Entry point**: [`Sources/OpenIslandHooks/main.swift`](../Sources/OpenIslandHooks/main.swift)
+The native `OpenIslandHooks` client also tracks the owning agent process for blocking permission hooks. If that process exits while the hook is waiting for an Open Island response, the hook closes its bridge connection promptly so the app can clear the abandoned interaction.
+
+**Entry point**: [`Sources/OpenIslandHooks/OpenIslandHooksCLI.swift`](../Sources/OpenIslandHooks/OpenIslandHooksCLI.swift)
 
 ---
 
